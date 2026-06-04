@@ -308,6 +308,58 @@ dev-setup:
 	@echo "   - make down              # Stop all services"
 	@echo "   - make clean-start       # Clean everything and start fresh"
 
+# Registry image dev stack (docker-compose.registry.yml)
+REGISTRY_COMPOSE := docker compose -f docker-compose.registry.yml
+FLEXPRICE_REGISTRY_IMAGE ?= registry.digitalocean.com/livebird/flexprice:latest
+
+.PHONY: pull-registry-image start-flexprice-registry stop-flexprice-registry restart-flexprice-registry dev-setup-registry
+
+pull-registry-image:
+	@echo "Pulling $(FLEXPRICE_REGISTRY_IMAGE)..."
+	@FLEXPRICE_REGISTRY_IMAGE=$(FLEXPRICE_REGISTRY_IMAGE) $(REGISTRY_COMPOSE) pull flexprice-api flexprice-consumer flexprice-worker
+	@echo "Registry image ready: $(FLEXPRICE_REGISTRY_IMAGE)"
+
+start-flexprice-registry:
+	@echo "Starting flexprice services (registry image)..."
+	@FLEXPRICE_REGISTRY_IMAGE=$(FLEXPRICE_REGISTRY_IMAGE) $(REGISTRY_COMPOSE) up -d flexprice-api flexprice-consumer flexprice-worker
+	@echo "Flexprice services started successfully"
+
+stop-flexprice-registry:
+	@echo "Stopping flexprice services (registry image)..."
+	@FLEXPRICE_REGISTRY_IMAGE=$(FLEXPRICE_REGISTRY_IMAGE) $(REGISTRY_COMPOSE) stop flexprice-api flexprice-consumer flexprice-worker
+	@echo "Flexprice services stopped successfully"
+
+restart-flexprice-registry: stop-flexprice-registry start-flexprice-registry
+	@echo "Flexprice services (registry) restarted successfully"
+
+dev-setup-registry:
+	@echo "Setting up FlexPrice development environment (registry image)..."
+	@echo "Image: $(FLEXPRICE_REGISTRY_IMAGE)"
+	@echo "Step 1: Starting infrastructure services..."
+	@FLEXPRICE_REGISTRY_IMAGE=$(FLEXPRICE_REGISTRY_IMAGE) $(REGISTRY_COMPOSE) up -d postgres kafka clickhouse temporal temporal-ui
+	@echo "Step 2: Pulling FlexPrice application image from registry..."
+	@FLEXPRICE_REGISTRY_IMAGE=$(FLEXPRICE_REGISTRY_IMAGE) make pull-registry-image
+	@echo "Step 3: Running database migrations and initializing Kafka..."
+	@make migrate-postgres migrate-clickhouse migrate-ent seed-db init-kafka
+	@echo "Step 4: Starting FlexPrice services..."
+	@FLEXPRICE_REGISTRY_IMAGE=$(FLEXPRICE_REGISTRY_IMAGE) make start-flexprice-registry
+	@echo ""
+	@echo "✅ FlexPrice development environment is now ready (registry image)!"
+	@echo "📊 Available services:"
+	@echo "   - API:          http://localhost:8080"
+	@echo "   - Temporal UI:  http://localhost:8088"
+	@echo "   - Kafka UI:     http://localhost:8084 (with profile 'dev')"
+	@echo "   - ClickHouse:   http://localhost:8123"
+	@echo ""
+	@echo "🔑 Default API Key (for local testing):"
+	@echo "   sk_local_flexprice_test_key"
+	@echo "   (pass as: -H 'x-api-key: sk_local_flexprice_test_key')"
+	@echo ""
+	@echo "💡 Useful commands:"
+	@echo "   - make restart-flexprice-registry  # Restart FlexPrice services"
+	@echo "   - make docker-registry-login         # Authenticate before pull if needed"
+	@echo "   - make down                          # Stop all services (default compose file)"
+
 .PHONY: apply-migration
 apply-migration:
 	@if [ -z "$(file)" ]; then \
@@ -321,6 +373,25 @@ apply-migration:
 .PHONY: docker-build-local
 docker-build-local:
 	docker compose build flexprice-build
+
+# DigitalOcean Container Registry — build and push (see dev-setup-registry to run locally)
+.PHONY: docker-registry-login docker-registry-build docker-registry-push docker-registry-publish
+
+docker-registry-login:
+	@echo "Logging in to registry.digitalocean.com (requires doctl)..."
+	@doctl registry login
+
+docker-registry-build:
+	@echo "Building $(FLEXPRICE_REGISTRY_IMAGE)..."
+	@FLEXPRICE_REGISTRY_IMAGE=$(FLEXPRICE_REGISTRY_IMAGE) $(REGISTRY_COMPOSE) build flexprice-build
+	@echo "Built $(FLEXPRICE_REGISTRY_IMAGE)"
+
+docker-registry-push:
+	@echo "Pushing $(FLEXPRICE_REGISTRY_IMAGE)..."
+	@FLEXPRICE_REGISTRY_IMAGE=$(FLEXPRICE_REGISTRY_IMAGE) $(REGISTRY_COMPOSE) push flexprice-build
+	@echo "Pushed $(FLEXPRICE_REGISTRY_IMAGE)"
+
+docker-registry-publish: docker-registry-build docker-registry-push
 
 .PHONY: install-typst
 install-typst:
